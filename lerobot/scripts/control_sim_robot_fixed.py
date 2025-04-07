@@ -81,11 +81,9 @@ This might require a sudo permission to allow your terminal to monitor keyboard 
 **NOTE**: You can resume/continue data recording by running the same data recording command twice.
 """
 
-import argparse
 import logging
 import time
 from dataclasses import asdict
-from pathlib import Path
 from pprint import pformat
 
 import numpy as np
@@ -97,8 +95,11 @@ from lerobot.common.robot_devices.control_configs import ControlPipelineConfig, 
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot, make_robot_from_config
 from lerobot.common.utils.utils import init_logging
 from lerobot.configs import parser
-import mujoco
+import os
 
+# os.environ["MUJOCO_GL"] = "egl"
+os.environ["LIBGL_DRIVERS_PATH"] = "/usr/lib/x86_64-linux-gnu/dri"
+os.environ["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
 
 DEFAULT_FEATURES = {
     "next.reward": {
@@ -157,8 +158,10 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
     env.reset()
     start_teleop_t = time.perf_counter()
     while True:
-        leader_pos = robot.leader_arms.main.read("Present_Position")
-        action = process_action_fn(leader_pos)
+        # leader_pos = robot.leader_arms.main.read("Present_Position")
+        # left_leader_pos = robot.leader_arms["left"].read("Present_Position")
+        # action = process_action_fn(left_leader_pos)
+        action = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         env.step(np.expand_dims(action, 0))
         if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
             print("Teleoperation processes finished.")
@@ -172,8 +175,6 @@ def control_sim_robot(cfg: ControlPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
     robot = make_robot_from_config(cfg.robot)
-
-    logging.info(f"MuJoCo Version: {mujoco.mj_version()}")
 
     # make gym env
     env_cfg: EnvConfig = make_env_config(cfg.robot.type)
