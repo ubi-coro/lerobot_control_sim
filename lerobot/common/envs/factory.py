@@ -27,6 +27,9 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "xarm":
         return XarmEnv(**kwargs)
+    elif env_type == "gelloha":
+        # TODO(jzilke) make Gelloha custom env??
+        return AlohaEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 

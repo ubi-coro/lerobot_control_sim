@@ -75,11 +75,12 @@ def make_robot_from_config(config: RobotConfig):
         from lerobot.common.robot_devices.robots.mobile_manipulator import MobileManipulator
 
         return MobileManipulator(config)
-    else:
+    elif isinstance(config, StretchRobotConfig):
         from lerobot.common.robot_devices.robots.stretch import StretchRobot
 
         return StretchRobot(config)
-
+    else:
+        raise NotImplementedError(f"RobotConfig not implemented: {config.type}")
 
 def make_robot(robot_type: str, **kwargs) -> Robot:
     config = make_robot_config(robot_type, **kwargs)

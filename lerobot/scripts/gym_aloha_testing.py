@@ -1,7 +1,6 @@
 import time
 import gymnasium as gym
-import gym_aloha  # Ensure this registers the environment
-import mujoco
+import gym_aloha  # Register the environment
 import mujoco.viewer
 
 # Create the Gym environment (without needing Gym rendering)

@@ -96,10 +96,11 @@ from lerobot.common.robot_devices.robots.utils import Robot, make_robot, make_ro
 from lerobot.common.utils.utils import init_logging
 from lerobot.configs import parser
 import os
+import mujoco.viewer
 
-# os.environ["MUJOCO_GL"] = "egl"
-os.environ["LIBGL_DRIVERS_PATH"] = "/usr/lib/x86_64-linux-gnu/dri"
-os.environ["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
+os.environ["MUJOCO_GL"] = "egl"
+# os.environ["LIBGL_DRIVERS_PATH"] = "/usr/lib/x86_64-linux-gnu/dri"
+# os.environ["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
 
 DEFAULT_FEATURES = {
     "next.reward": {
@@ -157,15 +158,30 @@ def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
 def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=None):
     env.reset()
     start_teleop_t = time.perf_counter()
-    while True:
-        # leader_pos = robot.leader_arms.main.read("Present_Position")
-        # left_leader_pos = robot.leader_arms["left"].read("Present_Position")
-        # action = process_action_fn(left_leader_pos)
-        action = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        env.step(np.expand_dims(action, 0))
-        if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
-            print("Teleoperation processes finished.")
-            break
+    # Access dm_control's Physics object
+    # physics = env.unwrapped._env.physics
+    physics = env.envs[0].unwrapped._env.physics
+    # Get raw model and data pointers
+    model = physics.model.ptr
+    data = physics.data.ptr
+
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        step = 0
+        while viewer.is_running():
+            for leader_arm in robot.leader_arms.values():
+                pos = leader_arm.read("Present_Position")
+            action = np.zeros(14, dtype=np.float32)
+            action[0] = np.random.uniform(-1, 1)
+            # Apply action manually
+            # physics.data.ctrl[:14] = action
+            env.step(np.expand_dims(action, 0))
+            # mujoco.mj_step(model, data)
+            viewer.sync()
+            time.sleep(0.01)
+
+            step += 1
+            if step % 100 == 0:
+                print(f"Step {step}")
 
 
 # TODO(jzilke): implement record, replay
@@ -173,8 +189,12 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
 @parser.wrap()
 def control_sim_robot(cfg: ControlPipelineConfig):
     init_logging()
-    logging.info(pformat(asdict(cfg)))
+    logging.basicConfig(level=logging.DEBUG)
+
+    logging.debug(pformat(asdict(cfg)))
     robot = make_robot_from_config(cfg.robot)
+    robot.follower_arms = {}
+    robot.connect()
 
     # make gym env
     env_cfg: EnvConfig = make_env_config(cfg.robot.type)
