@@ -637,7 +637,7 @@ class GellohaConfig(ManipulatorRobotConfig):
     # of the grippers only (by commenting out the rest of the motors in this configuration),
     # then gradually adding more motors (by uncommenting) until you can teleoperate both arms fully.
 
-    max_relative_target: int | None = 5
+    max_relative_target: int | None = 25
 
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
@@ -655,20 +655,20 @@ class GellohaConfig(ManipulatorRobotConfig):
                     "gripper": (7, "xl330-m077")
                 },
             ),
-            # "right": DynamixelMotorsBusConfig(
-            #     # Gello
-            #     port="/dev/ttyDXL_leader_right", # TODO(jzilke)
-            #     motors={
-            #         # name: (index, model)
-            #         "waist": (1, "xl330-m288"),
-            #         "shoulder": (2, "xl330-m288"),
-            #         "elbow": (3, "xl330-m288"),
-            #         "forearm_roll": (4, "xl330-m288"),
-            #         "wrist_angle": (5, "xl330-m288"),
-            #         "wrist_rotate": (6, "xl330-m288"),
-            #         "gripper": (7, "xl330-m077")
-            #     },
-            # ),
+            "right": DynamixelMotorsBusConfig(
+                # Gello
+                port="/dev/ttyDXL_leader_right", # TODO(jzilke)
+                motors={
+                    # name: (index, model)
+                    "waist": (1, "xl330-m288"),
+                    "shoulder": (2, "xl330-m288"),
+                    "elbow": (3, "xl330-m288"),
+                    "forearm_roll": (4, "xl330-m288"),
+                    "wrist_angle": (5, "xl330-m288"),
+                    "wrist_rotate": (6, "xl330-m288"),
+                    "gripper": (7, "xl330-m077")
+                },
+            ),
         }
     )
 
@@ -739,4 +739,4 @@ class GellohaConfig(ManipulatorRobotConfig):
         }
     )
 
-    mock: bool = False
+    mock: bool = True

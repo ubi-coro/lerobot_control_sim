@@ -170,10 +170,11 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
         while viewer.is_running():
             for leader_arm in robot.leader_arms.values():
                 pos = leader_arm.read("Present_Position")
-            action = np.zeros(14, dtype=np.float32)
-            action[0] = np.random.uniform(-1, 1)
+
+            action = np.concatenate((pos, pos)) # TODO(jzilke) use both arms, not duplicate one
+            # action[0] = np.random.uniform(-1, 1)
             # Apply action manually
-            # physics.data.ctrl[:14] = action
+            # physics.data.ctrl[:7] = action
             env.step(np.expand_dims(action, 0))
             # mujoco.mj_step(model, data)
             viewer.sync()
