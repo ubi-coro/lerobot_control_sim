@@ -99,8 +99,7 @@ import os
 import mujoco.viewer
 
 os.environ["MUJOCO_GL"] = "egl"
-# os.environ["LIBGL_DRIVERS_PATH"] = "/usr/lib/x86_64-linux-gnu/dri"
-# os.environ["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
+
 
 DEFAULT_FEATURES = {
     "next.reward": {
@@ -149,6 +148,19 @@ def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
     """Counts - starting position -> radians -> align axes -> offset"""
     return axis_directions * (real_positions - start_pos) * 2.0 * np.pi / 4096 + offsets
 
+def map_to_zero_one(value, min_val=95, max_val=125):
+    """
+    Mappt einen Wert aus dem Bereich [min_val, max_val] auf den Bereich [0, 1].
+
+    :param value: Der Wert, der gemappt werden soll.
+    :param min_val: Minimum des ursprünglichen Bereichs (Standard: 95).
+    :param max_val: Maximum des ursprünglichen Bereichs (Standard: 125).
+    :return: Der gemappte Wert im Bereich [0, 1].
+    """
+
+    normalized_value = (value - min_val) / (max_val - min_val)
+    return -normalized_value + 1
+
 
 ########################################################################################
 # Control modes                                                                        #
@@ -165,24 +177,32 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
     model = physics.model.ptr
     data = physics.data.ptr
 
+    min_pos = 0.0
+    max_pos = 0.0
     with mujoco.viewer.launch_passive(model, data) as viewer:
-        step = 0
         while viewer.is_running():
             for leader_arm in robot.leader_arms.values():
                 pos = leader_arm.read("Present_Position")
 
+            gripper = map_to_zero_one(pos[6])
+            pos = np.deg2rad(pos)
+            pos[0] = -pos[0]
+            pos[1] = -(pos[1] - np.pi/2)
+            pos[2] = pos[2] - np.pi/2
+            pos[3] = -(pos[3] + np.pi)
+            pos[4] = -pos[4]
+            pos[5] = -(pos[5] - np.pi)
+            pos[6] = gripper
+            zeros = np.zeros(pos.shape)
             action = np.concatenate((pos, pos)) # TODO(jzilke) use both arms, not duplicate one
-            # action[0] = np.random.uniform(-1, 1)
-            # Apply action manually
-            # physics.data.ctrl[:7] = action
+
             env.step(np.expand_dims(action, 0))
             # mujoco.mj_step(model, data)
             viewer.sync()
             time.sleep(0.01)
+        print(f"min pos: {min_pos}, max pos: {max_pos}")
 
-            step += 1
-            if step % 100 == 0:
-                print(f"Step {step}")
+
 
 
 # TODO(jzilke): implement record, replay
@@ -191,10 +211,11 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
 def control_sim_robot(cfg: ControlPipelineConfig):
     init_logging()
     logging.basicConfig(level=logging.DEBUG)
-
+    logging.info(os.environ["MUJOCO_GL"])
     logging.debug(pformat(asdict(cfg)))
     robot = make_robot_from_config(cfg.robot)
     robot.follower_arms = {}
+    robot.cameras = {}
     robot.connect()
 
     # make gym env
