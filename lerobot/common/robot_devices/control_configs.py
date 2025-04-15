@@ -18,6 +18,7 @@ from pathlib import Path
 import draccus
 
 from lerobot.common.robot_devices.robots.configs import RobotConfig
+from lerobot.common.sim.configs import SimConfig
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 
@@ -127,3 +128,7 @@ class ControlPipelineConfig:
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["control.policy"]
+
+@dataclass
+class SimControlPipelineConfig(ControlPipelineConfig):
+    sim: SimConfig

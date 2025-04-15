@@ -12,74 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Utilities to control a robot in simulation.
+Utilities to control a robot in simulation using real hardware inputs.
 
-Useful to record a dataset, replay a recorded episode and record an evaluation dataset.
+This script allows you to teleoperate a robot in simulation, making it useful for testing and validating robot behavior in a controlled environment.
+Currently, only teleoperation is supported, but features for recording datasets and replaying recorded episodes will be added soon.
 
 Examples of usage:
 
-
-- Unlimited teleoperation at a limited frequency of 30 Hz, to simulate data recording frequency.
-  You can modify this value depending on how fast your simulation can run:
+- Teleoperate a robot in simulation:
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
-    --fps 30 \
-    --robot-path lerobot/configs/robot/your_robot_config.yaml \
-    --sim-config lerobot/configs/env/your_sim_config.yaml
+python3 lerobot/scripts/control_sim_robot_fixed.py \
+    --robot.type=gelloha \
+    --control.type=teleoperate \
+    --control.fps=30 \
+    --sim.type=aloha
 ```
-
-- Record one episode in order to test replay:
-```bash
-python lerobot/scripts/control_sim_robot.py record \
-    --robot-path lerobot/configs/robot/your_robot_config.yaml \
-    --sim-config lerobot/configs/env/your_sim_config.yaml \
-    --fps 30 \
-    --repo-id $USER/robot_sim_test \
-    --num-episodes 1 \
-    --run-compute-stats 0
-```
-
-Enable the --push-to-hub 1 to push the recorded dataset to the huggingface hub.
-
-- Visualize dataset:
-```bash
-python lerobot/scripts/visualize_dataset.py \
-    --repo-id $USER/robot_sim_test \
-    --episode-index 0
-```
-
-- Replay a sequence of test episodes:
-```bash
-python lerobot/scripts/control_sim_robot.py replay \
-    --robot-path lerobot/configs/robot/your_robot_config.yaml \
-    --sim-config lerobot/configs/env/your_sim_config.yaml \
-    --fps 30 \
-    --repo-id $USER/robot_sim_test \
-    --episode 0
-```
-Note: The seed is saved, therefore, during replay we can load the same environment state as the one during collection.
-
-- Record a full dataset in order to train a policy,
-30 seconds of recording for each episode, and 10 seconds to reset the environment in between episodes:
-```bash
-python lerobot/scripts/control_sim_robot.py record \
-    --robot-path lerobot/configs/robot/your_robot_config.yaml \
-    --sim-config lerobot/configs/env/your_sim_config.yaml \
-    --fps 30 \
-    --repo-id $USER/robot_sim_test \
-    --num-episodes 50 \
-    --episode-time-s 30 \
-```
-
-**NOTE**: You can use your keyboard to control data recording flow.
-- Tap right arrow key '->' to early exit while recording an episode and go to resetting the environment.
-- Tap right arrow key '->' to early exit while resetting the environment and got to recording the next episode.
-- Tap left arrow key '<-' to early exit and re-record the current episode.
-- Tap escape key 'esc' to stop the data recording.
-This might require a sudo permission to allow your terminal to monitor keyboard events.
-
-**NOTE**: You can resume/continue data recording by running the same data recording command twice.
 """
+
 
 import logging
 import time
@@ -91,15 +40,16 @@ from gymnasium.vector import VectorEnv
 
 from lerobot.common.envs import EnvConfig
 from lerobot.common.envs.factory import make_env_config, make_env
-from lerobot.common.robot_devices.control_configs import ControlPipelineConfig, TeleoperateControlConfig
+from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig, \
+    SimControlPipelineConfig
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot, make_robot_from_config
+from lerobot.common.sim.configs import SimConfig
 from lerobot.common.utils.utils import init_logging
 from lerobot.configs import parser
 import os
 import mujoco.viewer
 
 os.environ["MUJOCO_GL"] = "egl"
-
 
 DEFAULT_FEATURES = {
     "next.reward": {
@@ -128,38 +78,19 @@ DEFAULT_FEATURES = {
 ########################################################################################
 # Utilities
 ########################################################################################
-def none_or_int(value):
-    if value == "None":
-        return None
-    return int(value)
-
-
-def init_sim_calibration(robot, cfg):
+def init_sim_calibration(cfg):
     # Constants necessary for transforming the joint pos of the real robot to the sim
     # depending on the robot description used in that sim.
-    start_pos = np.array(robot.leader_arms.main.calibration["start_pos"])
-    axis_directions = np.array(cfg.get("axis_directions", [1]))
-    offsets = np.array(cfg.get("offsets", [0])) * np.pi
+    axis_directions = np.array(
+        [value for arm in cfg.values() for value in arm.get("drive_mode")]) * -2 + 1  # drive_mode to axis_directions
+    offsets = np.array([value for arm in cfg.values() for value in arm.get("homing_offset")])
+    return {"axis_directions": axis_directions, "offsets": offsets}
 
-    return {"start_pos": start_pos, "axis_directions": axis_directions, "offsets": offsets}
 
-
-def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
-    """Counts - starting position -> radians -> align axes -> offset"""
-    return axis_directions * (real_positions - start_pos) * 2.0 * np.pi / 4096 + offsets
-
-def map_to_zero_one(value, min_val=95, max_val=125):
-    """
-    Mappt einen Wert aus dem Bereich [min_val, max_val] auf den Bereich [0, 1].
-
-    :param value: Der Wert, der gemappt werden soll.
-    :param min_val: Minimum des ursprünglichen Bereichs (Standard: 95).
-    :param max_val: Maximum des ursprünglichen Bereichs (Standard: 125).
-    :return: Der gemappte Wert im Bereich [0, 1].
-    """
-
-    normalized_value = (value - min_val) / (max_val - min_val)
-    return -normalized_value + 1
+def real_positions_to_sim(real_positions, axis_directions, offsets):
+    """starting position -> radians -> align axes -> offset -> scaling"""
+    offset_radians = offsets * 2 * np.pi / 4096
+    return axis_directions * np.deg2rad(real_positions) + offset_radians
 
 
 ########################################################################################
@@ -170,59 +101,69 @@ def map_to_zero_one(value, min_val=95, max_val=125):
 def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=None):
     env.reset()
     start_teleop_t = time.perf_counter()
-    # Access dm_control's Physics object
-    # physics = env.unwrapped._env.physics
+
+    # TODO(jzilke): Use the gym env viewer
+    # Access dm_control's Physics object to render environment. workaround while gpu is not available
+    assert len(env.envs) == 1, "Teleoperation supports only one environment at a time."
     physics = env.envs[0].unwrapped._env.physics
     # Get raw model and data pointers
     model = physics.model.ptr
     data = physics.data.ptr
 
-    min_pos = 0.0
-    max_pos = 0.0
+
     with mujoco.viewer.launch_passive(model, data) as viewer:
+        viewer.cam.fixedcamid = 0  # Set the camera index
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+
         while viewer.is_running():
-            for leader_arm in robot.leader_arms.values():
-                pos = leader_arm.read("Present_Position")
-
-            gripper = map_to_zero_one(pos[6])
-            pos = np.deg2rad(pos)
-            pos[0] = -pos[0]
-            pos[1] = -(pos[1] - np.pi/2)
-            pos[2] = pos[2] - np.pi/2
-            pos[3] = -(pos[3] + np.pi)
-            pos[4] = -pos[4]
-            pos[5] = -(pos[5] - np.pi)
-            pos[6] = gripper
-            zeros = np.zeros(pos.shape)
-            action = np.concatenate((pos, pos)) # TODO(jzilke) use both arms, not duplicate one
-
+            action = np.concatenate([leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
+            action = np.concatenate((action, action)) if len(action) < 14 else action # TODO(jzilke) remove this line
+            action = process_action_fn(action)
             env.step(np.expand_dims(action, 0))
-            # mujoco.mj_step(model, data)
             viewer.sync()
-            time.sleep(0.01)
-        print(f"min pos: {min_pos}, max pos: {max_pos}")
 
 
+
+            if teleop_time_s and (time.perf_counter() - start_teleop_t > teleop_time_s):
+                print("Teleoperation processes finished.")
+                break
+
+def get_sim_calibration(cfg: SimConfig):
+    import json
+    calibration_data = {}
+    for arm in cfg.simulated_arms:
+        calib_json = os.path.join(cfg.calibration_dir, arm + '.json')
+        with open(calib_json, 'r') as file:
+            calibration_data[arm] = json.load(file)
+    return calibration_data
 
 
 # TODO(jzilke): implement record, replay
 
 @parser.wrap()
-def control_sim_robot(cfg: ControlPipelineConfig):
+def control_sim_robot(cfg: SimControlPipelineConfig):
     init_logging()
     logging.basicConfig(level=logging.DEBUG)
     logging.info(os.environ["MUJOCO_GL"])
     logging.debug(pformat(asdict(cfg)))
+
+    calibration = get_sim_calibration(cfg.sim)
+
     robot = make_robot_from_config(cfg.robot)
     robot.follower_arms = {}
     robot.cameras = {}
     robot.connect()
 
     # make gym env
-    env_cfg: EnvConfig = make_env_config(cfg.robot.type)
+    env_cfg: EnvConfig = make_env_config(cfg.sim.env)
+    if isinstance(cfg.control, TeleoperateControlConfig):
+        env_cfg.episode_length = np.inf  # dont reset environment
     env: VectorEnv = make_env(env_cfg)
 
-    process_leader_actions_fn = None
+    calib_kwgs = init_sim_calibration(calibration)
+
+    def process_leader_actions_fn(action):
+        return real_positions_to_sim(action, **calib_kwgs)
 
     if isinstance(cfg.control, TeleoperateControlConfig):
         teleoperate(env, robot, process_leader_actions_fn)

@@ -3,8 +3,12 @@ import gymnasium as gym
 import gym_aloha  # Register the environment
 import mujoco.viewer
 
+import os
+os.environ["MUJOCO_GL"] = "egl"
+
+
 # Create the Gym environment (without needing Gym rendering)
-env = gym.make('gym_aloha/AlohaInsertion-v0', render_mode=None)
+env = gym.make('gym_aloha/AlohaInsertion-v0', render_mode="rgb_array")
 
 # Access dm_control's Physics object
 physics = env.unwrapped._env.physics
