@@ -885,6 +885,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
         ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
+
         check_timestamps_sync(
             episode_buffer["timestamp"],
             episode_buffer["episode_index"],

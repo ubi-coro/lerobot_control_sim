@@ -291,7 +291,7 @@ def encode_video_frames(
     ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
     # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
     subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
-
+    logging.info(f"Video encoding completed: {video_path}")
     if not video_path.exists():
         raise OSError(
             f"Video encoding did not work. File not found: {video_path}. "
