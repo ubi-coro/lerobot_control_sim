@@ -164,9 +164,14 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
     data = physics.data.ptr
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
+        viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+        viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+        viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
+        viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
+        viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_CULL_FACE] = 0
+        viewer.sync()
         while viewer.is_running():
             action = np.concatenate([leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
-            action = np.concatenate((action, action)) if len(action) < 14 else action  # TODO(jzilke) remove this line when using both arms
             action = process_action_fn(action)
             env.step(np.expand_dims(action, 0))
             viewer.sync()
@@ -228,7 +233,6 @@ def record(
                 raise NotImplementedError("Policy is not yet implemented for record.") #TODO(jzilke)
             else:
                 leader_pos = np.concatenate([leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
-                leader_pos = np.concatenate((leader_pos, leader_pos)) if len(leader_pos) < 14 else action  # TODO(jzilke) remove this line when using both arms
                 action = process_action_from_leader(leader_pos)
                 action = np.expand_dims(action, 0)
 
@@ -242,7 +246,7 @@ def record(
                 "next.reward": np.array(reward, dtype=np.float32),
                 "next.success": np.array(success, dtype=bool),
                 "seed": np.array([seed], dtype=np.int64),
-                "timestamp": np.array([env_timestamp], dtype=np.float32),
+                # "timestamp": np.array([env_timestamp], dtype=np.float32), # TODO(jzilke): fix timestamp issue
                 "task": cfg.single_task
             }
 
@@ -316,6 +320,7 @@ def control_sim_robot(cfg: SimControlPipelineConfig):
 
     # make gym env
     env_cfg: EnvConfig = make_env_config(cfg.sim.env)
+    # env_cfg.episode_length = np.inf  # dont reset environment
     if isinstance(cfg.control, TeleoperateControlConfig):
         env_cfg.episode_length = np.inf  # dont reset environment
     env: VectorEnv = make_env(env_cfg)

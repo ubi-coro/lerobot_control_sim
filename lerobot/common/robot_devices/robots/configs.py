@@ -641,20 +641,20 @@ class GellohaConfig(ManipulatorRobotConfig):
 
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
-            # "left": DynamixelMotorsBusConfig(
-            #     # Gello
-            #     port="/dev/ttyUSB0",
-            #     motors={
-            #         # name: (index, model)
-            #         "waist": (1, "xl330-m288"),
-            #         "shoulder": (2, "xl330-m288"),
-            #         "elbow": (3, "xl330-m288"),
-            #         "forearm_roll": (4, "xl330-m288"),
-            #         "wrist_angle": (5, "xl330-m288"),
-            #         "wrist_rotate": (6, "xl330-m288"),
-            #         "gripper": (7, "xl330-m077")
-            #     },
-            # ),
+            "left": DynamixelMotorsBusConfig(
+                # Gello
+                port="/dev/ttyUSB1",
+                motors={
+                    # name: (index, model)
+                    "waist": (1, "xl330-m288"),
+                    "shoulder": (2, "xl330-m288"),
+                    "elbow": (3, "xl330-m288"),
+                    "forearm_roll": (4, "xl330-m288"),
+                    "wrist_angle": (5, "xl330-m288"),
+                    "wrist_rotate": (6, "xl330-m288"),
+                    "gripper": (7, "xl330-m077")
+                },
+            ),
             "right": DynamixelMotorsBusConfig(
                 # Gello
                 port="/dev/ttyUSB0",
