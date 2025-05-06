@@ -44,20 +44,18 @@ from lerobot.common.envs.factory import make_env_config, make_env
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig, \
     SimControlPipelineConfig, RecordControlConfig
-from lerobot.common.robot_devices.control_utils import sanity_check_dataset_robot_compatibility, \
-    sanity_check_dataset_name, init_keyboard_listener, reset_environment, warmup_record, stop_recording, record_episode, \
-    predict_action, is_headless, log_control_info
-from lerobot.common.robot_devices.robots.utils import Robot, make_robot, make_robot_from_config
+from lerobot.common.robot_devices.control_utils import sanity_check_dataset_name, init_keyboard_listener, \
+    is_headless, log_control_info
+from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.sim.configs import SimConfig
-from lerobot.common.utils.utils import init_logging, log_say, has_method
+from lerobot.common.utils.utils import init_logging, log_say
 from lerobot.configs import parser
 import os
 import mujoco.viewer
 import shutil
 
 import torch
-
 
 os.environ["MUJOCO_GL"] = "egl"
 
@@ -112,6 +110,7 @@ def get_sim_calibration(cfg: SimConfig):
             calibration_data[arm] = json.load(file)
     return calibration_data
 
+
 def load_or_create_dataset(cfg, env):
     # get image keys
     policy = None
@@ -156,8 +155,6 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
     start_teleop_t = time.perf_counter()
 
     physics = env.envs[0].unwrapped._env.physics
-    # TODO(jzilke): Use the gym env viewer
-    # Access dm_control's Physics object to render environment. workaround while gpu is not available
     assert len(env.envs) == 1, "Teleoperation supports only one environment at a time."
     # Get raw model and data pointers
     model = physics.model.ptr
@@ -170,9 +167,18 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
         viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
         viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_CULL_FACE] = 0
         viewer.sync()
+        i = 0
         while viewer.is_running():
             action = np.concatenate([leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
+            gripper_true_val_left = action[6]
+            gripper_true_val_right = action[-1]
             action = process_action_fn(action)
+            action[6] = gripper_true_val_left / 100
+            action[-1] = gripper_true_val_right / 100
+            if i % 20 == 0:
+                print(f"Gripper LEFT: {gripper_true_val_left}: Normalized: {action[6]}")
+                print(f"Gripper RIGH: {gripper_true_val_right}: Normalized: {action[-1]}")
+            i += 1
             env.step(np.expand_dims(action, 0))
             viewer.sync()
 
@@ -180,8 +186,10 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
                 print("Teleoperation processes finished.")
                 break
 
+
 def access_cameras(env):
     return env.envs[0].unwrapped._env.physics.named.model.name_camadr
+
 
 def record(
         env,
@@ -204,7 +212,6 @@ def record(
 
     # initialize listener before sim env
     listener, events = init_keyboard_listener()
-
 
     # get image keys
     image_keys = list(env.observation_space['pixels'].spaces.keys())
@@ -230,9 +237,10 @@ def record(
             start_loop_t = time.perf_counter()
 
             if policy is not None:
-                raise NotImplementedError("Policy is not yet implemented for record.") #TODO(jzilke)
+                raise NotImplementedError("Policy is not yet implemented for record.")  # TODO(jzilke)
             else:
-                leader_pos = np.concatenate([leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
+                leader_pos = np.concatenate(
+                    [leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
                 action = process_action_from_leader(leader_pos)
                 action = np.expand_dims(action, 0)
 
@@ -254,7 +262,7 @@ def record(
                 if not key.startswith("observation.image"):
                     image = observation['pixels'][key]
                     # Shape: (1, 480, 640, 3) -> (3, 480, 640)
-                    image = np.transpose(image.squeeze(0), (2, 0, 1)) #TODO(jzilke): Support multiple envs
+                    image = np.transpose(image.squeeze(0), (2, 0, 1))  # TODO(jzilke): Support multiple envs
 
                     frame["observation.image." + key] = image
                 else:
@@ -302,7 +310,8 @@ def record(
 
     return dataset
 
-# TODO(jzilke): implement record, replay
+
+# TODO(jzilke): implement replay
 
 @parser.wrap()
 def control_sim_robot(cfg: SimControlPipelineConfig):
@@ -316,8 +325,13 @@ def control_sim_robot(cfg: SimControlPipelineConfig):
     robot = make_robot_from_config(cfg.robot)
     robot.follower_arms = {}
     robot.cameras = {}
-    robot.connect()
-
+    try:
+        robot.connect()
+    except Exception as e:
+        if robot.config.mock:
+            pass
+        else:
+            raise e
     # make gym env
     env_cfg: EnvConfig = make_env_config(cfg.sim.env)
     # env_cfg.episode_length = np.inf  # dont reset environment
