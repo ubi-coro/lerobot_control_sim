@@ -40,7 +40,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 @EnvConfig.register_subclass("aloha")
 @dataclass
 class AlohaEnv(EnvConfig):
-    task: str = "AlohaInsertion-v1"
+    task: str = "AlohaTransferCube-v1"
     fps: int = 50
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"

@@ -21,11 +21,23 @@ Examples of usage:
 
 - Teleoperate a robot in simulation:
 ```bash
-python3 lerobot/scripts/control_sim_robot_fixed.py \
-    --robot.type=gelloha \
+python3 lerobot/scripts/control_sim_robot.py \
     --control.type=teleoperate \
+    --robot.type=gelloha \
     --control.fps=30 \
     --sim.type=aloha
+```
+
+- Record a dataset in simulation:
+```bash
+python3 lerobot/scripts/control_sim_robot.py \
+    --control.type=record \
+    --robot.type=gelloha \
+    --control.fps=30 \
+    --sim.type=aloha \
+    --control.repo_id=test_dataset \
+    --control.single_task="Record Test Dataset" \
+    --control.episode_time_s=30
 ```
 """
 
@@ -171,26 +183,13 @@ def teleoperate(env: VectorEnv, robot: Robot, process_action_fn, teleop_time_s=N
         viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
         viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
         viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_CULL_FACE] = 0
-        viewer.sync()
-        i = 0
         while viewer.is_running():
             action = np.concatenate([leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
-            gripper_true_val_left = action[6]
-            gripper_true_val_right = action[-1]
             action = process_action_fn(action)
-            # normalize gripper
-            # TODO(jzilke): Do this in process_action_fn
-            action[6] = gripper_true_val_left / 100
-            action[-1] = gripper_true_val_right / 100
-            if i % 20 == 0:
-                print(f"Gripper LEFT: {gripper_true_val_left}: Normalized: {action[6]}")
-                print(f"Gripper RIGH: {gripper_true_val_right}: Normalized: {action[-1]}")
-            i += 1
-            env.step(np.expand_dims(action, 0))
+            _, reward, _, _, _ = env.step(np.expand_dims(action, 0))
             viewer.sync()
-
             if teleop_time_s and (time.perf_counter() - start_teleop_t > teleop_time_s):
-                print("Teleoperation processes finished.")
+                logging.info("Teleoperation processes finished.")
                 break
 
 
@@ -204,6 +203,13 @@ def record(
         process_action_from_leader,
         cfg: RecordControlConfig
 ) -> LeRobotDataset:
+    ##########################################################################
+    # TODO(jzilke): only while WIP
+    prefix = '/home/jzilke/.cache/huggingface/lerobot/'
+    full_pth = os.path.join(prefix, cfg.repo_id)
+    if os.path.exists(full_pth):
+        shutil.rmtree(full_pth)
+    ##########################################################################
     dataset = load_or_create_dataset(cfg, env)
     policy = None if cfg.policy is None else make_policy(cfg.policy)
 
