@@ -14,6 +14,7 @@
 
 import abc
 from dataclasses import dataclass, field
+from typing import List
 
 import draccus
 
@@ -45,6 +46,9 @@ class AlohaEnv(EnvConfig):
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
+    viewer: str = "camera"
+    image_keys: List[str] = field(default_factory=lambda: ["teleoperator_pov", "wrist_cam_right"])
+    # image_keys: List[str] = field(default_factory=lambda: [])
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
@@ -72,6 +76,7 @@ class AlohaEnv(EnvConfig):
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
             "max_episode_steps": self.episode_length,
+            "camera_list": self.image_keys,
         }
 
 

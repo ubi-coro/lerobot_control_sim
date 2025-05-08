@@ -8,6 +8,8 @@ class SimConfig(draccus.ChoiceRegistry, abc.ABC):
     env: str
     simulated_arms: List[str]
     calibration_dir: str
+    viewer: str
+    image_keys: List[str]
 
     @property
     def type(self) -> str:
@@ -18,6 +20,9 @@ class SimConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class AlohaSimConfig(SimConfig):
     env: str = "aloha"
+    viewer: str = "camera"
+    image_keys: List[str] = field(default_factory=lambda: ["teleoperator_pov", "wrist_cam_right"])
+    # image_keys: List[str] = field(default_factory=lambda: [])
     simulated_arms: List[str] = field(default_factory=lambda: [
         "left_follower",
         "right_follower"])

@@ -643,7 +643,7 @@ class GellohaConfig(ManipulatorRobotConfig):
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(
                 # Gello
-                port="/dev/ttyUSB1",
+                port="/dev/ttyUSB0",
                 motors={
                     # name: (index, model)
                     "waist": (1, "xl330-m288"),
@@ -657,7 +657,7 @@ class GellohaConfig(ManipulatorRobotConfig):
             ),
             "right": DynamixelMotorsBusConfig(
                 # Gello
-                port="/dev/ttyUSB0",
+                port="/dev/ttyUSB1",
                 motors={
                     # name: (index, model)
                     "waist": (1, "xl330-m288"),
