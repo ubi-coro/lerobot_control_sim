@@ -40,13 +40,14 @@ python3 lerobot/scripts/control_sim_robot.py \
     --control.episode_time_s=30
 ```
 """
+import cv2
+import numpy as np
 
 import logging
 import time
 from dataclasses import asdict
 from pprint import pformat
 
-import numpy as np
 from gymnasium.vector import VectorEnv
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -147,8 +148,9 @@ def load_or_create_dataset(cfg, env, image_keys):
             features[key] = {"dtype": "video", "names": ["channels", "height", "width"],
                              "shape": (channels, height, width)}
 
-        features["action"] = {"dtype": "float32", "shape": env.action_space.shape, "names": None}
-
+        features["action"] = {"dtype": "float32", "shape": env.envs[0].unwrapped.action_space.shape, "names": None}
+        pos_shape = (env.observation_space['agent_pos'].shape[1],)
+        features["observation.state"] = {"dtype": "float64", "shape": pos_shape, "names": None}
         sanity_check_dataset_name(cfg.repo_id, policy)
         dataset = LeRobotDataset.create(
             cfg.repo_id,
@@ -247,7 +249,7 @@ def record(
                 env_timestamp = info.get("timestamp", dataset.episode_buffer["size"] / cfg.fps)
 
                 frame = {
-                    "action": torch.from_numpy(action).float(),
+                    "action": torch.from_numpy(leader_pos).float(),
                     "next.reward": np.array(reward, dtype=np.float32),
                     "next.success": np.array(success, dtype=bool),
                     "seed": np.array([seed], dtype=np.int64),
@@ -264,6 +266,7 @@ def record(
                     else:
                         frame[key] = observation[key]
 
+                frame['observation.state'] = observation['agent_pos'][0]
                 dataset.add_frame(frame)
 
                 if cfg.fps is not None:

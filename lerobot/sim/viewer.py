@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 import cv2
 import mujoco.viewer
 import logging
-import numpy as np
 
 
 def create_viewer(key, **kwargs):
@@ -50,7 +49,7 @@ class MujocoViewer(AbstractViewer):
 
 
     def __enter__(self):
-        self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+        self.viewer = mujoco.viewer.launch_passive(self.model, self.data, show_left_ui=False, show_right_ui=False)
         self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
         self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
         self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
@@ -89,10 +88,9 @@ class CVViewer(AbstractViewer):
         if not self.image_keys:
             self.image_keys = list(observation['pixels'].keys())
         for key in self.image_keys:
-            image = observation['pixels'][key]
-            # Shape: (1, 480, 640, 3) -> (3, 480, 640)
-            image = np.transpose(image.squeeze(0), (0, 1, 2))
-            cv2.imshow(key, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+            image = observation['pixels'][key].squeeze(0)
+            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            cv2.imshow(key, image_bgr)
 
         # close with Esc
         if cv2.waitKey(1) == 27:
