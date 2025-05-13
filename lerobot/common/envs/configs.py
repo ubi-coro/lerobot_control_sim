@@ -47,7 +47,13 @@ class AlohaEnv(EnvConfig):
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     viewer: str = "camera"
-    image_keys: List[str] = field(default_factory=lambda: ["teleoperator_pov", "wrist_cam_right"])
+    image_keys: List[str] = field(default_factory=lambda: ["wrist_cam_right",
+                                                           "wrist_cam_left",
+                                                           # "teleoperator_pov",
+                                                           # "collaborator_pov",
+                                                           "overhead_cam",
+                                                           "worms_eye_cam",
+                                                           ])
     # image_keys: List[str] = field(default_factory=lambda: [])
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {

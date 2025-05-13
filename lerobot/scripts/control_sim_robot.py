@@ -195,13 +195,6 @@ def record(
         cfg: RecordControlConfig,
         image_keys=None,
 ) -> LeRobotDataset:
-    ##########################################################################
-    # TODO(jzilke): only while WIP
-    prefix = '/home/jzilke/.cache/huggingface/lerobot/'
-    full_pth = os.path.join(prefix, cfg.repo_id)
-    if os.path.exists(full_pth):
-        shutil.rmtree(full_pth)
-    ##########################################################################
 
     # get image keys
     if not image_keys:
@@ -229,7 +222,6 @@ def record(
 
             if cfg.episode_time_s is None:
                 cfg.episode_time_s = float("inf")
-            cfg.episode_time_s = 10
             timestamp = 0
             start_episode_t = time.perf_counter()
 
@@ -259,7 +251,7 @@ def record(
                     "next.reward": np.array(reward, dtype=np.float32),
                     "next.success": np.array(success, dtype=bool),
                     "seed": np.array([seed], dtype=np.int64),
-                    # "timestamp": np.array([env_timestamp], dtype=np.float32),  # TODO(jzilke): fix timestamp issue
+                    "timestamp": np.array([env_timestamp], dtype=np.float32),
                     "task": cfg.single_task
                 }
 
@@ -271,9 +263,6 @@ def record(
                         frame["observation.image." + key] = image
                     else:
                         frame[key] = observation[key]
-
-                # for key, obs_key in state_keys_dict.items(): # TODO(jzilke): Needed??
-                #     frame[key] = torch.from_numpy(observation[obs_key])
 
                 dataset.add_frame(frame)
 
@@ -330,7 +319,7 @@ def control_sim_robot(cfg: SimControlPipelineConfig):
             raise e
     # make gym env
     env_cfg: EnvConfig = make_env_config(cfg.sim.env)
-    # env_cfg.episode_length = np.inf  # dont reset environment
+    env_cfg.episode_length = np.inf  # dont reset environment
     if isinstance(cfg.control, TeleoperateControlConfig):
         env_cfg.episode_length = np.inf  # dont reset environment
     env: VectorEnv = make_env(env_cfg)
