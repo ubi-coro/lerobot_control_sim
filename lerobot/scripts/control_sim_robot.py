@@ -122,7 +122,7 @@ def get_sim_calibration(cfg: SimConfig):
     import json
     calibration_data = {}
     for arm in cfg.simulated_arms:
-        calib_json = os.path.join(cfg.calibration_dir, f"{arm}.json)
+        calib_json = os.path.join(cfg.calibration_dir, f"{arm}.json")
         with open(calib_json, 'r') as file:
             calibration_data[arm] = json.load(file)
     return calibration_data
