@@ -40,7 +40,6 @@ python3 lerobot/scripts/control_sim_robot.py \
     --control.episode_time_s=30
 ```
 """
-import cv2
 import numpy as np
 
 import logging
@@ -53,22 +52,23 @@ from gymnasium.vector import VectorEnv
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.envs import EnvConfig
 from lerobot.common.envs.factory import make_env_config, make_env
+from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig, \
     SimControlPipelineConfig, RecordControlConfig
 from lerobot.common.robot_devices.control_utils import sanity_check_dataset_name, init_keyboard_listener, \
-    is_headless, log_control_info
+    log_control_info, predict_action
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
-from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.sim.configs import SimConfig
-from lerobot.common.utils.utils import init_logging, log_say
+from lerobot.common.sim.control_utils_sim import control_loop
+from lerobot.common.utils.utils import init_logging, log_say, get_safe_torch_device
 from lerobot.configs import parser
 import os
-import shutil
 
 import torch
 
-from lerobot.sim.viewer import create_viewer
+from lerobot.common.sim.viewer import create_viewer
 
 os.environ["MUJOCO_GL"] = "egl"
 
@@ -104,15 +104,14 @@ def init_sim_calibration(cfg):
     # depending on the robot description used in that sim.
     axis_directions = np.array(
         [value for arm in cfg.values() for value in arm.get("drive_mode")]) * -2 + 1  # drive_mode to axis_directions
-    offsets = np.array([value for arm in cfg.values() for value in arm.get("homing_offset")])
+    offsets = np.array([value for arm in cfg.values() for value in arm.get("homing_offset")])  * 2 * np.pi / 4096 # offsets in radians
     linear = np.array([value == "LINEAR" for arm in cfg.values() for value in arm.get("calib_mode")], dtype=bool)
     return {"axis_directions": axis_directions, "offsets": offsets, "linear": linear}
 
 
 def real_positions_to_sim(real_positions, axis_directions, offsets, linear):
     """starting position -> radians -> align axes -> offset -> scaling"""
-    offset_radians = offsets * 2 * np.pi / 4096
-    sim_position = axis_directions * np.deg2rad(real_positions) + offset_radians
+    sim_position = axis_directions * np.deg2rad(real_positions) + offsets
     # Keep the real position for joints marked as linear
     sim_position[linear] = real_positions[linear] / 100
 
@@ -123,7 +122,7 @@ def get_sim_calibration(cfg: SimConfig):
     import json
     calibration_data = {}
     for arm in cfg.simulated_arms:
-        calib_json = os.path.join(cfg.calibration_dir, arm + '.json')
+        calib_json = os.path.join(cfg.calibration_dir, f"{arm}.json)
         with open(calib_json, 'r') as file:
             calibration_data[arm] = json.load(file)
     return calibration_data
@@ -168,7 +167,22 @@ def load_or_create_dataset(cfg, env, image_keys):
 # Control modes                                                                        #
 ########################################################################################
 
-def teleoperate(env: VectorEnv, robot: Robot, viewer_fn, process_action_fn, teleop_time_s=None):
+
+@safe_disconnect
+def teleoperate(robot: Robot, env: VectorEnv, viewer_fn, process_action_fn, cfg: TeleoperateControlConfig):
+    control_loop(
+        robot,
+        env,
+        viewer_fn=viewer_fn,
+        process_action_fn=process_action_fn,
+        control_time_s=cfg.teleop_time_s,
+        fps=cfg.fps,
+        teleoperate=True,
+        display_cameras=cfg.display_cameras,
+    )
+
+
+def teleoperate_old(env: VectorEnv, robot: Robot, viewer_fn, process_action_fn, teleop_time_s=None):
     assert env.num_envs == 1, "Teleoperation supports only one environment at a time."
 
     env.reset()
@@ -185,10 +199,6 @@ def teleoperate(env: VectorEnv, robot: Robot, viewer_fn, process_action_fn, tele
                 break
 
 
-def access_cameras(env):
-    return env.envs[0].unwrapped._env.physics.named.model.name_camadr  # TODO(jzilke) support multi envs
-
-
 def record(
         env,
         robot: Robot,
@@ -197,21 +207,24 @@ def record(
         cfg: RecordControlConfig,
         image_keys=None,
 ) -> LeRobotDataset:
-
     # get image keys
     if not image_keys:
         image_keys = list(env.observation_space['pixels'].spaces.keys())
 
     dataset = load_or_create_dataset(cfg, env, image_keys)
-    policy = None if cfg.policy is None else make_policy(cfg.policy)
+    policy = None
+    if cfg.policy:
+        device = "cuda"
+
+        ckpt_path = "/media/local/outputs/train/test_train/checkpoints/last/pretrained_model"
+        policy = ACTPolicy.from_pretrained(ckpt_path)
+        policy.to(device)
 
     if policy is None and process_action_from_leader is None:
         raise ValueError("Either policy or process_action_fn has to be set to enable control in sim.")
 
     # initialize listener before sim env
     listener, events = init_keyboard_listener()
-
-
 
     recorded_episodes = 0
 
@@ -229,19 +242,24 @@ def record(
 
             seed = np.random.randint(0, int(1e5))
             env.reset(seed=seed)
-
+            frame = None
             while timestamp < cfg.episode_time_s:
                 start_loop_t = time.perf_counter()
 
-                if policy is not None:
-                    raise NotImplementedError("Policy is not yet implemented for record.")  # TODO(jzilke)
+                if policy is not None and frame is not None:
+                    obs = {key: torch.from_numpy(value) if isinstance(value, np.ndarray) else value for key, value in
+                           frame.items() if key.startswith("observation")}
+                    obs["observation.state"] = obs["observation.state"].to(torch.float32)
+                    action = predict_action(
+                        obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                    ).numpy()
                 else:
-                    leader_pos = np.concatenate(
+                    action = np.concatenate(
                         [leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
-                    action = process_action_from_leader(leader_pos)
-                    action = np.expand_dims(action, 0)
+                action_sim = process_action_from_leader(action)
+                action_sim = np.expand_dims(action_sim, 0)
 
-                observation, reward, terminated, _, info = env.step(action)
+                observation, reward, terminated, _, info = env.step(action_sim)
 
                 viewer.sync(observation)
 
@@ -249,7 +267,7 @@ def record(
                 env_timestamp = info.get("timestamp", dataset.episode_buffer["size"] / cfg.fps)
 
                 frame = {
-                    "action": torch.from_numpy(leader_pos).float(),
+                    "action": torch.from_numpy(action).float(),
                     "next.reward": np.array(reward, dtype=np.float32),
                     "next.success": np.array(success, dtype=bool),
                     "seed": np.array([seed], dtype=np.int64),
@@ -301,6 +319,29 @@ def record(
 
 # TODO(jzilke): implement replay
 
+def run_policy(env: VectorEnv, robot: Robot, viewer_fn, process_action_fn, teleop_time_s=None):
+    assert env.num_envs == 1, "Teleoperation supports only one environment at a time."
+
+    observation, success = env.reset()
+    start_teleop_t = time.perf_counter()
+
+    device = "cuda"
+
+    ckpt_path = "/media/local/outputs/train/test_train/checkpoints/last/pretrained_model"
+    policy = ACTPolicy.from_pretrained(ckpt_path)
+    policy.to(device)
+
+    with viewer_fn() as viewer:
+        while viewer.is_running():
+            action = policy.select_action(observation)
+            action = process_action_fn(action)
+            observation, reward, _, _, _ = env.step(np.expand_dims(action, 0))
+            viewer.sync(observation)
+            if teleop_time_s and (time.perf_counter() - start_teleop_t > teleop_time_s):
+                logging.info("Teleoperation processes finished.")
+                break
+
+
 @parser.wrap()
 def control_sim_robot(cfg: SimControlPipelineConfig):
     init_logging()
@@ -343,11 +384,13 @@ def control_sim_robot(cfg: SimControlPipelineConfig):
         }
         return create_viewer(**viewer_kwargs)
 
+    # run_policy(env, robot, viewer_fn, process_leader_actions_fn)
+
     if isinstance(cfg.control, TeleoperateControlConfig):
-        teleoperate(env, robot,viewer_fn, process_leader_actions_fn)
+        teleoperate(robot, env, viewer_fn, process_leader_actions_fn, cfg.control)
 
     if isinstance(cfg.control, RecordControlConfig):
-        record(env, robot, viewer_fn,  process_leader_actions_fn, cfg.control, image_keys=cfg.sim.image_keys)
+        record(env, robot, viewer_fn, process_leader_actions_fn, cfg.control, image_keys=cfg.sim.image_keys)
 
     if robot and robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process

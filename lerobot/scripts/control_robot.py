@@ -23,7 +23,7 @@ Examples of usage:
 ```bash
 python lerobot/scripts/control_robot.py \
     --robot.type=so100 \
-    --control.type=calibrate
+    --control.type=calibfirrate
 ```
 
 - Unlimited teleoperation at highest frequency (~200 Hz is expected), to exit with CTRL+C:
