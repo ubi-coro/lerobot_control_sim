@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import List
 import draccus
 
+
 @dataclass
 class SimConfig(draccus.ChoiceRegistry, abc.ABC):
     env: str
@@ -21,13 +22,14 @@ class SimConfig(draccus.ChoiceRegistry, abc.ABC):
 class AlohaSimConfig(SimConfig):
     env: str = "aloha"
     viewer: str = "mujoco"
-    image_keys: List[str] = field(default_factory=lambda: ["wrist_cam_right",
-                                                           "wrist_cam_left",
-                                                           # "teleoperator_pov",
-                                                           # "collaborator_pov",
-                                                           "overhead_cam",
-                                                           "worms_eye_cam",
-                                                           ])
+    image_keys: List[str] = field(default_factory=lambda: [
+        # "wrist_cam_right",
+        "wrist_cam_left",
+        # "teleoperator_pov",
+        # "collaborator_pov",
+        "overhead_cam",
+        "worms_eye_cam",
+    ])
     # image_keys: List[str] = field(default_factory=lambda: [])
     simulated_arms: List[str] = field(default_factory=lambda: [
         "left_follower",
