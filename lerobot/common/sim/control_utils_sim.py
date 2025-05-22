@@ -40,7 +40,7 @@ def warmup_record(
         robot,
         env,
         events,
-        viewer_fn,
+        viewer,
         process_action_fn,
         enable_teleoperation,
         warmup_time_s,
@@ -53,14 +53,14 @@ def warmup_record(
         events=events,
         fps=fps,
         teleoperate=enable_teleoperation,
-        viewer_fn=viewer_fn,
+        viewer=viewer,
         process_action_fn=process_action_fn,
     )
 
 
 def reset_environment(
         robot, env, events, reset_time_s, fps,
-        viewer_fn,
+        viewer,
         process_action_fn, ):
     control_loop(
         robot=robot,
@@ -69,7 +69,7 @@ def reset_environment(
         events=events,
         fps=fps,
         teleoperate=True,
-        viewer_fn=viewer_fn,
+        viewer=viewer,
         process_action_fn=process_action_fn,
     )
 
@@ -83,8 +83,9 @@ def record_episode(
         policy,
         fps,
         single_task,
-        viewer_fn,
+        viewer,
         process_action_fn,
+        image_keys
 ):
     control_loop(
         robot=robot,
@@ -96,16 +97,26 @@ def record_episode(
         fps=fps,
         teleoperate=policy is None,
         single_task=single_task,
-        viewer_fn=viewer_fn,
+        viewer=viewer,
         process_action_fn=process_action_fn,
+        image_keys=image_keys,
     )
+
+
+def obs2input(observation, image_keys):
+    p_input = {
+        f"observation.image.{key}": torch.from_numpy(observation['pixels'][key][0]) for key in image_keys
+
+    }
+    p_input['observation.state'] = torch.from_numpy(observation['agent_pos'][0]).to(torch.float32)
+    return p_input
 
 
 @safe_stop_image_writer
 def control_loop(
         robot,
         env,
-        viewer_fn,
+        viewer,
         process_action_fn,
         control_time_s=None,
         teleoperate=False,
@@ -117,13 +128,8 @@ def control_loop(
         single_task: str | None = None,
         image_keys: list[str] | None = None,
 ):
-    # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
         robot.connect()
-
-        # get image keys
-    if image_keys is None:
-        image_keys = list(env.observation_space['pixels'].spaces.keys())
 
     if events is None:
         events = {"exit_early": False}
@@ -141,48 +147,53 @@ def control_loop(
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
     seed = seed or np.random.randint(0, int(1e5))
-    env.reset(seed=seed)
+    observation, _ = env.reset(seed=seed)
 
     timestamp = 0
     start_episode_t = time.perf_counter()
-    with viewer_fn() as viewer:
-        while timestamp < control_time_s and viewer.is_running():
-            start_loop_t = time.perf_counter()
 
-            if teleoperate:
-                action = np.concatenate(
-                    [leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
-                action_sim = process_action_fn(action)
-                action_sim = np.expand_dims(action_sim, 0)
-            else:  # policy
+    viewer.start()
+    # with viewer() as viewer:
+    while timestamp < control_time_s and viewer.is_running():
+        start_loop_t = time.perf_counter()
+
+        if teleoperate:
+            action = np.concatenate(
+                [leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
+
+        else:
+
+            if policy is not None:  # policy
+                p_input = obs2input(observation, image_keys)
                 action = predict_action(
-                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
-                )
-                action_sim = action
+                    p_input, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                ).numpy()
+        action_sim = process_action_fn(action)
+        action_sim = np.expand_dims(action_sim, 0)
 
-            observation, reward, terminated, _, info = env.step(action_sim)
-            viewer.sync(observation)
+        observation, reward, terminated, _, info = env.step(action_sim)
+        viewer.sync(observation)
 
-            if dataset is not None:
-                save_frame(
-                    info=info,
-                    dataset=dataset,
-                    action=action,
-                    reward=reward,
-                    seed=seed,
-                    single_task=single_task,
-                    image_keys=image_keys,
-                    observation=observation,
-                    fps=fps,
-                )
+        if dataset is not None:
+            save_frame(
+                info=info,
+                dataset=dataset,
+                action=action,
+                reward=reward,
+                seed=seed,
+                single_task=single_task,
+                image_keys=image_keys,
+                observation=observation,
+                fps=fps,
+            )
 
-            dt_s = time.perf_counter() - start_loop_t
-            if fps is not None:
-                busy_wait(1 / fps - dt_s)
+        dt_s = time.perf_counter() - start_loop_t
+        if fps is not None:
+            busy_wait(1 / fps - dt_s)
 
-            log_control_info(robot, dt_s, fps=fps)
+        log_control_info(robot, dt_s, fps=fps)
 
-            timestamp = time.perf_counter() - start_episode_t
-            if events["exit_early"] or terminated:
-                events["exit_early"] = False
-                break
+        timestamp = time.perf_counter() - start_episode_t
+        if events["exit_early"]:
+            events["exit_early"] = False
+            break

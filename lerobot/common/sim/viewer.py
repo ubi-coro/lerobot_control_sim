@@ -26,9 +26,16 @@ class ViewerRegistry:
 
 
 class AbstractViewer(ViewerRegistry, ABC):
-    def __enter__(self): return self
+    def start(self): pass
 
-    def __exit__(self, exc_type, exc_val, exc_tb): pass
+    def stop(self): pass
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
 
     @abstractmethod
     def is_running(self): pass
@@ -48,36 +55,42 @@ class MujocoViewer(AbstractViewer):
             logging.debug(f"Unused parameters in MujocoViewer: {kwargs}")
 
 
-    def __enter__(self):
-        self.viewer = mujoco.viewer.launch_passive(self.model, self.data, show_left_ui=False, show_right_ui=False)
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_CULL_FACE] = 0
-        self.viewer.__enter__()
-        return self
+    def start(self):
+        if not self.is_running():
+            self.viewer = mujoco.viewer.launch_passive(self.model, self.data, show_left_ui=False, show_right_ui=False)
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_CULL_FACE] = 0
+            # self.viewer.__enter__()
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        return self.viewer.__exit__(exc_type, exc_val, exc_tb)
+    def stop(self):
+        if self.viewer is not None:
+            self.viewer.close()
+            self.viewer = None
 
     def is_running(self):
-        return self.viewer.is_running()
+        return self.viewer.is_running() if self.viewer else False
 
     def sync(self, observation):
-        self.viewer.sync()
+        if self.viewer:
+            self.viewer.sync()
 
 
 @AbstractViewer.register_subclass("camera")
 class CVViewer(AbstractViewer):
     def __init__(self, image_keys=None, **kwargs):
         self.image_keys = image_keys
-        self.running = True
+        self.running = False
 
         if kwargs:
             logging.debug(f"Unused parameters in CVViewer: {kwargs}")
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def start(self):
+        self.running = True
+
+    def stop(self):
         cv2.destroyAllWindows()
         self.running = False
 
@@ -104,29 +117,34 @@ class MujocoCameraViewer(AbstractViewer):
         self.data = data
         self.viewer = None
         self.image_keys = image_keys
+        self.running = False
         if kwargs:
             logging.debug(f"Unused parameters in MujocoViewer: {kwargs}")
 
 
-    def __enter__(self):
-        self.viewer = mujoco.viewer.launch_passive(self.model, self.data, show_left_ui=False, show_right_ui=False)
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
-        self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_CULL_FACE] = 0
-        self.viewer.__enter__()
-        return self
+    def start(self):
+        if self.viewer is None:
+            self.viewer = mujoco.viewer.launch_passive(self.model, self.data, show_left_ui=False, show_right_ui=False)
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
+            self.viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_CULL_FACE] = 0
+            self.running = True
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        cv2.destroyAllWindows()
-        return self.viewer.__exit__(exc_type, exc_val, exc_tb)
+    def stop(self):
+        if self.viewer is not None:
+            cv2.destroyAllWindows()
+            self.viewer.close()
+            self.viewer = None
+            self.running = False
 
     def is_running(self):
-        return self.viewer.is_running()
+        return self.viewer.is_running()  if self.viewer else False
 
     def sync(self, observation):
-        self.viewer.sync()
+        if self.viewer:
+            self.viewer.sync()
         if not self.image_keys:
             self.image_keys = list(observation['pixels'].keys())
         for key in self.image_keys:
@@ -138,10 +156,15 @@ class MujocoCameraViewer(AbstractViewer):
 @AbstractViewer.register_subclass("headless")
 class HeadlessViewer(AbstractViewer):
     def __init__(self, **kwargs):
-        self.running = True
+        self.running = False
         if kwargs:
             logging.debug(f"Unused parameters in HeadlessViewer: {kwargs}")
 
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
 
     def is_running(self):
         return self.running

@@ -170,47 +170,28 @@ def load_or_create_dataset(cfg, env, image_keys):
 
 
 @safe_disconnect
-def teleoperate(robot: Robot, env: VectorEnv, viewer_fn, process_action_fn, cfg: TeleoperateControlConfig):
+def teleoperate(robot: Robot, env: VectorEnv, viewer, process_action_fn, cfg: TeleoperateControlConfig):
     control_loop(
         robot,
         env,
-        viewer_fn=viewer_fn,
+        viewer=viewer,
         process_action_fn=process_action_fn,
         control_time_s=cfg.teleop_time_s,
         fps=cfg.fps,
-        teleoperate=True,
-        display_cameras=cfg.display_cameras,
+        teleoperate=True
     )
 
 
-def teleoperate_old(env: VectorEnv, robot: Robot, viewer_fn, process_action_fn, teleop_time_s=None):
-    assert env.num_envs == 1, "Teleoperation supports only one environment at a time."
-
-    env.reset()
-    start_teleop_t = time.perf_counter()
-
-    with viewer_fn() as viewer:
-        while viewer.is_running():
-            action = np.concatenate([leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
-            action = process_action_fn(action)
-            observation, reward, _, _, _ = env.step(np.expand_dims(action, 0))
-            viewer.sync(observation)
-            if teleop_time_s and (time.perf_counter() - start_teleop_t > teleop_time_s):
-                logging.info("Teleoperation processes finished.")
-                break
-
-
 # @safe_disconnect
-def record_new(
+def record(
         env,
         robot: Robot,
-        viewer_fn,
+        viewer,
         process_action_from_leader,
         cfg: RecordControlConfig,
         image_keys=None,
 ):
     dataset = load_or_create_dataset(cfg, env, image_keys)
-
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
@@ -225,7 +206,7 @@ def record_new(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    warmup_record(robot, env, events, viewer_fn, process_action_from_leader, enable_teleoperation, cfg.warmup_time_s, cfg.fps)
+    warmup_record(robot, env, events, viewer, process_action_from_leader, True, cfg.warmup_time_s, cfg.fps)
 
     # TODO(jzilke): check
     # if has_method(robot, "teleop_safety_stop"):
@@ -246,20 +227,21 @@ def record_new(
             policy=policy,
             fps=cfg.fps,
             single_task=cfg.single_task,
-            viewer_fn=viewer_fn,
+            viewer=viewer,
             process_action_fn=process_action_from_leader,
+            image_keys=image_keys
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
         # Current code logic doesn't allow to teleoperate during this time.
         # TODO(rcadene): add an option to enable teleoperation during reset
         # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
-                (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
-        ):
-            log_say("Reset the environment", cfg.play_sounds)
-            reset_environment(robot, env, events, cfg.reset_time_s, cfg.fps,viewer_fn=viewer_fn,
-            process_action_fn=process_action_from_leader,) #TODO(jzilke)
+        # if not events["stop_recording"] and (
+        #         (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
+        # ):
+        #     log_say("Reset the environment", cfg.play_sounds)
+        #     reset_environment(robot, env, events, cfg.reset_time_s, cfg.fps,viewer=viewer,
+        #     process_action_fn=process_action_from_leader,) #TODO(jzilke)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)
@@ -284,127 +266,10 @@ def record_new(
     return dataset
 
 
-def record(
-        env,
-        robot: Robot,
-        viewer_fn,
-        process_action_from_leader,
-        cfg: RecordControlConfig,
-        image_keys=None,
-) -> LeRobotDataset:
-    # get image keys
-    if not image_keys:
-        image_keys = list(env.observation_space['pixels'].spaces.keys())
-
-    dataset = load_or_create_dataset(cfg, env, image_keys)
-    policy = None
-    if cfg.policy:
-        device = "cuda"
-
-        ckpt_path = "/media/local/outputs/train/test_train/checkpoints/last/pretrained_model"
-        policy = ACTPolicy.from_pretrained(ckpt_path)
-        policy.to(device)
-
-    if policy is None and process_action_from_leader is None:
-        raise ValueError("Either policy or process_action_fn has to be set to enable control in sim.")
-
-    # initialize listener before sim env
-    listener, events = init_keyboard_listener()
-
-    recorded_episodes = 0
-
-    with viewer_fn() as viewer:
-        while viewer.is_running():
-            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-
-            if events is None:
-                events = {"exit_early": False}
-
-            if cfg.episode_time_s is None:
-                cfg.episode_time_s = float("inf")
-            timestamp = 0
-            start_episode_t = time.perf_counter()
-
-            seed = np.random.randint(0, int(1e5))
-            env.reset(seed=seed)
-            frame = None
-            while timestamp < cfg.episode_time_s:
-                start_loop_t = time.perf_counter()
-
-                if policy is not None and frame is not None:
-                    obs = {key: torch.from_numpy(value) if isinstance(value, np.ndarray) else value for key, value in
-                           frame.items() if key.startswith("observation")}
-                    obs["observation.state"] = obs["observation.state"].to(torch.float32)
-                    action = predict_action(
-                        obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
-                    ).numpy()
-                else:
-                    action = np.concatenate(
-                        [leader_arm.read("Present_Position") for leader_arm in robot.leader_arms.values()])
-                action_sim = process_action_from_leader(action)
-                action_sim = np.expand_dims(action_sim, 0)
-
-                observation, reward, terminated, _, info = env.step(action_sim)
-
-                viewer.sync(observation)
-
-                success = info.get("is_success", False)
-                env_timestamp = info.get("timestamp", dataset.episode_buffer["size"] / cfg.fps)
-
-                frame = {
-                    "action": torch.from_numpy(action).float(),
-                    "next.reward": np.array(reward, dtype=np.float32),
-                    "next.success": np.array(success, dtype=bool),
-                    "seed": np.array([seed], dtype=np.int64),
-                    "timestamp": np.array([env_timestamp], dtype=np.float32),
-                    "task": cfg.single_task
-                }
-
-                for key in image_keys:
-                    if not key.startswith("observation.image"):
-                        image = observation['pixels'][key]
-                        # Shape: (1, 480, 640, 3) -> (3, 480, 640)
-                        image = np.transpose(image.squeeze(0), (2, 0, 1))  # TODO(jzilke): Support multiple envs
-                        frame["observation.image." + key] = image
-                    else:
-                        frame[key] = observation[key]
-
-                frame['observation.state'] = observation['agent_pos'][0]
-                dataset.add_frame(frame)
-
-                if cfg.fps is not None:
-                    dt_s = time.perf_counter() - start_loop_t
-                    busy_wait(1 / cfg.fps - dt_s)
-
-                dt_s = time.perf_counter() - start_loop_t
-                log_control_info(robot, dt_s, fps=cfg.fps)
-
-                timestamp = time.perf_counter() - start_episode_t
-                if events["exit_early"] or terminated:
-                    events["exit_early"] = False
-                    break
-
-            if events["rerecord_episode"]:
-                log_say("Re-record episode", cfg.play_sounds)
-                events["rerecord_episode"] = False
-                events["exit_early"] = False
-                dataset.clear_episode_buffer()
-                continue
-
-            dataset.save_episode()
-            recorded_episodes += 1
-            if events["stop_recording"] or recorded_episodes >= cfg.num_episodes:
-                break
-            else:
-                logging.info("Waiting for a few seconds before starting next episode recording...")
-                busy_wait(3)
-
-        return dataset
-
 
 # TODO(jzilke): implement replay
 
-def run_policy(env: VectorEnv, robot: Robot, viewer_fn, process_action_fn, teleop_time_s=None):
+def run_policy(env: VectorEnv, ckpt_path: str, viewer, process_action_fn, teleop_time_s=None):
     assert env.num_envs == 1, "Teleoperation supports only one environment at a time."
 
     observation, success = env.reset()
@@ -412,11 +277,10 @@ def run_policy(env: VectorEnv, robot: Robot, viewer_fn, process_action_fn, teleo
 
     device = "cuda"
 
-    ckpt_path = "/media/local/outputs/train/test_train/checkpoints/last/pretrained_model"
     policy = ACTPolicy.from_pretrained(ckpt_path)
     policy.to(device)
 
-    with viewer_fn() as viewer:
+    with viewer() as viewer:
         while viewer.is_running():
             action = policy.select_action(observation)
             action = process_action_fn(action)
@@ -458,24 +322,24 @@ def control_sim_robot(cfg: SimControlPipelineConfig):
     def process_leader_actions_fn(action):
         return real_positions_to_sim(action, **calib_kwgs)
 
-    def viewer_fn():
-        physics = env.envs[0].unwrapped._env.physics
-        # Get raw model and data pointers
-        viewer_kwargs = {
-            "key": cfg.sim.viewer,
-            "model": physics.model.ptr,
-            "data": physics.data.ptr,
-            "image_keys": cfg.sim.image_keys
-        }
-        return create_viewer(**viewer_kwargs)
+    # def viewer():
+    physics = env.envs[0].unwrapped._env.physics
+    # Get raw model and data pointers
+    viewer_kwargs = {
+        "key": cfg.sim.viewer,
+        "model": physics.model.ptr,
+        "data": physics.data.ptr,
+        "image_keys": cfg.sim.image_keys
+    }
+    viewer = create_viewer(**viewer_kwargs)
 
-    # run_policy(env, robot, viewer_fn, process_leader_actions_fn)
+    # run_policy(env, cfg.control.policy.pretrained_path, viewer, process_leader_actions_fn)
 
     if isinstance(cfg.control, TeleoperateControlConfig):
-        teleoperate(robot, env, viewer_fn, process_leader_actions_fn, cfg.control)
+        teleoperate(robot, env, viewer, process_leader_actions_fn, cfg.control)
 
     if isinstance(cfg.control, RecordControlConfig):
-        record_new(env, robot, viewer_fn, process_leader_actions_fn, cfg.control, image_keys=cfg.sim.image_keys)
+        record(env, robot, viewer, process_leader_actions_fn, cfg.control, image_keys=cfg.sim.image_keys)
 
     if robot and robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process
