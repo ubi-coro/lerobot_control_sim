@@ -47,6 +47,7 @@ class AlohaEnv(EnvConfig):
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     viewer: str = "camera"
+    stage: int = 2
     image_keys: List[str] = field(default_factory=lambda: [
         # "wrist_cam_right",
         "wrist_cam_left",
@@ -84,6 +85,7 @@ class AlohaEnv(EnvConfig):
             "render_mode": self.render_mode,
             "max_episode_steps": self.episode_length,
             "camera_list": self.image_keys,
+            "stage": self.stage,
         }
 
 
