@@ -31,13 +31,17 @@ python3 lerobot/scripts/control_sim_robot.py \
 - Record a dataset in simulation:
 ```bash
 python3 lerobot/scripts/control_sim_robot.py \
-    --control.type=record \
-    --robot.type=gelloha \
-    --control.fps=30 \
-    --sim.type=aloha \
-    --control.repo_id=test_dataset \
-    --control.single_task="Record Test Dataset" \
-    --control.episode_time_s=30
+    --robot.type=gelloha
+    --control.type=record
+    --control.fps=30
+    --sim.type=aloha
+    --control.repo_id=data/insertion_task
+    --control.single_task="Stack Cubes"
+    --control.episode_time_s=180
+    --control.warmup_time_s=5
+    --control.reset_time=10
+    --control.num_episodes=50
+    --control.reset_time_s=5
 ```
 """
 import numpy as np
