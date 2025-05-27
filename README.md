@@ -88,8 +88,8 @@
 
 Download our source code:
 ```bash
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
+git clone https://github.com/ubi-coro/lerobot_control_sim
+cd lerobot_control_sim
 ```
 
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
