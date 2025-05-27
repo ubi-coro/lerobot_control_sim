@@ -49,7 +49,7 @@ class AlohaEnv(EnvConfig):
     viewer: str = "camera"
     stage: int = 2
     image_keys: List[str] = field(default_factory=lambda: [
-        # "wrist_cam_right",
+        "wrist_cam_right",
         "wrist_cam_left",
         # "teleoperator_pov",
         # "collaborator_pov",

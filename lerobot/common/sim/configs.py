@@ -21,9 +21,9 @@ class SimConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class AlohaSimConfig(SimConfig):
     env: str = "aloha"
-    viewer: str = "both"
+    viewer: str = "mujoco"
     image_keys: List[str] = field(default_factory=lambda: [
-        # "wrist_cam_right",
+        "wrist_cam_right",
         "wrist_cam_left",
         # "teleoperator_pov",
         # "collaborator_pov",
