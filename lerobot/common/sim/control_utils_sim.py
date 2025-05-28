@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import time
 import torch
@@ -85,7 +87,8 @@ def record_episode(
         single_task,
         viewer,
         process_action_fn,
-        image_keys
+        image_keys,
+        task_name=""
 ):
     control_loop(
         robot=robot,
@@ -100,8 +103,34 @@ def record_episode(
         viewer=viewer,
         process_action_fn=process_action_fn,
         image_keys=image_keys,
+        task_name=task_name
     )
 
+def run_policy(
+        robot,
+        env,
+        policy,
+        fps,
+        single_task,
+        viewer,
+        process_action_fn,
+        image_keys,
+        task_name="",
+        stop_event=None
+):
+    control_loop(
+        robot=robot,
+        env=env,
+        policy=policy,
+        fps=fps,
+        teleoperate=False,
+        single_task=single_task,
+        viewer=viewer,
+        process_action_fn=process_action_fn,
+        image_keys=image_keys,
+        task_name=task_name,
+        stop_event=stop_event
+    )
 
 def obs2input(observation, image_keys):
     p_input = {
@@ -127,6 +156,8 @@ def control_loop(
         fps: int | None = None,
         single_task: str | None = None,
         image_keys: list[str] | None = None,
+        stop_event=None,
+        task_name: str = "",
 ):
     if not robot.is_connected:
         robot.connect()
@@ -155,6 +186,9 @@ def control_loop(
     viewer.start()
     # with viewer() as viewer:
     while timestamp < control_time_s and viewer.is_running():
+        if stop_event is not None and stop_event.is_set():
+            print("stopping simulation loop")
+            break
         start_loop_t = time.perf_counter()
 
         if teleoperate:
@@ -191,7 +225,7 @@ def control_loop(
         if fps is not None:
             busy_wait(1 / fps - dt_s)
 
-        log_control_info(robot, dt_s, fps=fps)
+        # log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_episode_t
         if events["exit_early"]:

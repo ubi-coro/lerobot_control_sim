@@ -44,6 +44,8 @@ python3 lerobot/scripts/control_sim_robot.py \
     --control.reset_time_s=5
 ```
 """
+import copy
+
 import numpy as np
 
 import logging
@@ -59,13 +61,14 @@ from lerobot.common.envs.factory import make_env_config, make_env
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig, \
-    SimControlPipelineConfig, RecordControlConfig
+    SimControlPipelineConfig, RecordControlConfig, PolicyControlConfig
 from lerobot.common.robot_devices.control_utils import sanity_check_dataset_name, init_keyboard_listener, \
     log_control_info, predict_action
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.sim.configs import SimConfig
-from lerobot.common.sim.control_utils_sim import control_loop, warmup_record, record_episode, reset_environment
+from lerobot.common.sim.control_utils_sim import control_loop, warmup_record, record_episode, reset_environment, \
+    run_policy
 from lerobot.common.utils.utils import init_logging, log_say, get_safe_torch_device
 from lerobot.configs import parser
 import os
@@ -174,7 +177,8 @@ def load_or_create_dataset(cfg, env, image_keys):
 
 
 @safe_disconnect
-def teleoperate(robot: Robot, env: VectorEnv, viewer, process_action_fn, cfg: TeleoperateControlConfig):
+def teleoperate(robot: Robot, env: VectorEnv, viewer, process_action_fn, cfg: TeleoperateControlConfig,
+                stop_event=None):
     control_loop(
         robot,
         env,
@@ -182,7 +186,8 @@ def teleoperate(robot: Robot, env: VectorEnv, viewer, process_action_fn, cfg: Te
         process_action_fn=process_action_fn,
         control_time_s=cfg.teleop_time_s,
         fps=cfg.fps,
-        teleoperate=True
+        teleoperate=True,
+        stop_event=stop_event,
     )
 
 
@@ -194,6 +199,7 @@ def record(
         process_action_from_leader,
         cfg: RecordControlConfig,
         image_keys=None,
+        task_name=""
 ):
     dataset = load_or_create_dataset(cfg, env, image_keys)
     # Load pretrained policy
@@ -210,7 +216,7 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    warmup_record(robot, env, events, viewer, process_action_from_leader, True, cfg.warmup_time_s, cfg.fps)
+    # warmup_record(robot, env, events, viewer, process_action_from_leader, True, cfg.warmup_time_s, cfg.fps)
 
     # TODO(jzilke): check
     # if has_method(robot, "teleop_safety_stop"):
@@ -233,7 +239,8 @@ def record(
             single_task=cfg.single_task,
             viewer=viewer,
             process_action_fn=process_action_from_leader,
-            image_keys=image_keys
+            image_keys=image_keys,
+            task_name=task_name
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -251,7 +258,10 @@ def record(
             log_say("Re-record episode", cfg.play_sounds)
             events["rerecord_episode"] = False
             events["exit_early"] = False
-            dataset.clear_episode_buffer()
+            try:
+                dataset.clear_episode_buffer()
+            except:
+                print("Couldnt clear episode buffer")
             continue
 
         dataset.save_episode()
@@ -270,33 +280,48 @@ def record(
     return dataset
 
 
-
 # TODO(jzilke): implement replay
 
-def run_policy(env: VectorEnv, ckpt_path: str, viewer, process_action_fn, teleop_time_s=None):
-    assert env.num_envs == 1, "Teleoperation supports only one environment at a time."
+def act_policy(
+        env,
+        robot: Robot,
+        viewer,
+        process_action_from_leader,
+        cfg: PolicyControlConfig,
+        image_keys=None,
+        task_name="",
+        stop_event=None
+):
+    import shutil
+    from pathlib import Path
+    cfg.root = "/home/jzilke/data/jzilke/act_policy"
+    cfg.repo_id = "jzilke/act_policy"
 
-    observation, success = env.reset()
-    start_teleop_t = time.perf_counter()
+    p = Path(cfg.root)
+    if p.exists():
+        shutil.rmtree(p)
+    dataset = load_or_create_dataset(cfg, env, image_keys)
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
-    device = "cuda"
+    if not robot.is_connected:
+        robot.connect()
 
-    policy = ACTPolicy.from_pretrained(ckpt_path)
-    policy.to(device)
-
-    with viewer() as viewer:
-        while viewer.is_running():
-            action = policy.select_action(observation)
-            action = process_action_fn(action)
-            observation, reward, _, _, _ = env.step(np.expand_dims(action, 0))
-            viewer.sync(observation)
-            if teleop_time_s and (time.perf_counter() - start_teleop_t > teleop_time_s):
-                logging.info("Teleoperation processes finished.")
-                break
+    run_policy(
+        robot=robot,
+        env=env,
+        policy=policy,
+        fps=cfg.fps,
+        single_task=cfg.single_task,
+        viewer=viewer,
+        process_action_fn=process_action_from_leader,
+        image_keys=image_keys,
+        task_name=task_name,
+        stop_event=stop_event
+    )
 
 
 @parser.wrap()
-def control_sim_robot(cfg: SimControlPipelineConfig):
+def control_sim_robot(cfg: SimControlPipelineConfig, stop_event=None, viewer=None):
     init_logging()
     logging.basicConfig(level=logging.DEBUG)
     logging.info(os.environ["MUJOCO_GL"])
@@ -316,6 +341,21 @@ def control_sim_robot(cfg: SimControlPipelineConfig):
             raise e
     # make gym env
     env_cfg: EnvConfig = make_env_config(cfg.sim.env)
+
+    if cfg.sim.task_name == "stacking":
+        env_cfg.task = "AlohaStacking-v0"
+    if cfg.sim.task_name == "insertion":
+        env_cfg.task = "AlohaInsertion-v1"
+    if cfg.sim.task_name == "place_cube_0":
+        env_cfg.task = "AlohaTransferCube-v1"
+        env_cfg.stage = 0
+    if cfg.sim.task_name == "place_cube_1":
+        env_cfg.task = "AlohaTransferCube-v1"
+        env_cfg.stage = 1
+    if cfg.sim.task_name == "place_cube_2":
+        env_cfg.task = "AlohaTransferCube-v1"
+        env_cfg.stage = 2
+
     env_cfg.episode_length = np.inf  # dont reset environment
     if isinstance(cfg.control, TeleoperateControlConfig):
         env_cfg.episode_length = np.inf  # dont reset environment
@@ -329,21 +369,36 @@ def control_sim_robot(cfg: SimControlPipelineConfig):
     # def viewer():
     physics = env.envs[0].unwrapped._env.physics
     # Get raw model and data pointers
-    viewer_kwargs = {
-        "key": cfg.sim.viewer,
-        "model": physics.model.ptr,
-        "data": physics.data.ptr,
-        "image_keys": cfg.sim.image_keys
-    }
-    viewer = create_viewer(**viewer_kwargs)
+
+    if viewer is None:
+        viewer_kwargs = {
+            "key": cfg.sim.viewer,
+            "model": physics.model.ptr,
+            "data": physics.data.ptr,
+            "image_keys": cfg.sim.image_keys
+        }
+        viewer = create_viewer(**viewer_kwargs)
+    else:
+        viewer.data = physics.data.ptr
+        viewer.model = physics.model.ptr
+        viewer.image_keys = cfg.sim.image_keys
+
+    image_keys = copy.deepcopy(cfg.sim.image_keys)
+    image_keys.remove("teleoperator_pov")
+    if "place_cube" in cfg.sim.task_name:
+        image_keys.remove("wrist_cam_right")
 
     # run_policy(env, cfg.control.policy.pretrained_path, viewer, process_leader_actions_fn)
 
     if isinstance(cfg.control, TeleoperateControlConfig):
-        teleoperate(robot, env, viewer, process_leader_actions_fn, cfg.control)
+        teleoperate(robot, env, viewer, process_leader_actions_fn, cfg.control, stop_event=stop_event)
 
     if isinstance(cfg.control, RecordControlConfig):
-        record(env, robot, viewer, process_leader_actions_fn, cfg.control, image_keys=cfg.sim.image_keys)
+        record(env, robot, viewer, process_leader_actions_fn, cfg.control, image_keys=image_keys,
+               task_name=cfg.sim.task_name)
+    if isinstance(cfg.control, PolicyControlConfig):
+        act_policy(env, robot, viewer, process_leader_actions_fn, cfg.control, image_keys=image_keys,
+                   task_name=cfg.sim.task_name, stop_event=stop_event)
 
     if robot and robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process

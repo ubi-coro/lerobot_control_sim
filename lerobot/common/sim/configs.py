@@ -7,6 +7,7 @@ import draccus
 @dataclass
 class SimConfig(draccus.ChoiceRegistry, abc.ABC):
     env: str
+    task_name: str
     simulated_arms: List[str]
     calibration_dir: str
     viewer: str
@@ -21,11 +22,12 @@ class SimConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class AlohaSimConfig(SimConfig):
     env: str = "aloha"
-    viewer: str = "mujoco"
+    task_name: str = "place_cube_2"
+    viewer: str = "both"
     image_keys: List[str] = field(default_factory=lambda: [
         "wrist_cam_right",
         "wrist_cam_left",
-        # "teleoperator_pov",
+        "teleoperator_pov",
         # "collaborator_pov",
         "overhead_cam",
         "worms_eye_cam",
