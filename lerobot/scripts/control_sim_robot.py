@@ -404,7 +404,7 @@ def control_sim_robot(cfg: SimControlPipelineConfig, stop_event=None, viewer=Non
         # Disconnect manually to avoid a "Core dump" during process
         # termination due to camera threads not properly exiting.
         robot.disconnect()
-
+    viewer.stop()
 
 if __name__ == "__main__":
     control_sim_robot()
