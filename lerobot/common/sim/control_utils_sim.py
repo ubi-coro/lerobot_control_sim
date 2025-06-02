@@ -109,6 +109,7 @@ def record_episode(
 def run_policy(
         robot,
         env,
+        events,
         policy,
         fps,
         single_task,
@@ -121,6 +122,7 @@ def run_policy(
     control_loop(
         robot=robot,
         env=env,
+        events=events,
         policy=policy,
         fps=fps,
         teleoperate=False,

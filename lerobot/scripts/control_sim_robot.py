@@ -186,16 +186,23 @@ def load_or_create_dataset(cfg, env, image_keys):
 @safe_disconnect
 def teleoperate(robot: Robot, env: VectorEnv, viewer, process_action_fn, cfg: TeleoperateControlConfig,
                 stop_event=None):
-    control_loop(
-        robot,
-        env,
-        viewer=viewer,
-        process_action_fn=process_action_fn,
-        control_time_s=cfg.teleop_time_s,
-        fps=cfg.fps,
-        teleoperate=True,
-        stop_event=stop_event,
-    )
+    listener, events = init_keyboard_listener()
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            break
+        control_loop(
+            robot,
+            env,
+            viewer=viewer,
+            events=events,
+            process_action_fn=process_action_fn,
+            control_time_s=cfg.teleop_time_s,
+            fps=cfg.fps,
+            teleoperate=True,
+            stop_event=stop_event,
+        )
+    if listener is not None:
+        listener.stop()
 
 
 # @safe_disconnect
@@ -279,6 +286,8 @@ def record(
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
     # stop_recording(robot, listener, cfg.display_cameras) #TODO(jzilke)
+    if listener is not None:
+        listener.stop()
 
     if cfg.push_to_hub:
         dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
@@ -313,18 +322,25 @@ def act_policy(
     if not robot.is_connected:
         robot.connect()
 
-    run_policy(
-        robot=robot,
-        env=env,
-        policy=policy,
-        fps=cfg.fps,
-        single_task=cfg.single_task,
-        viewer=viewer,
-        process_action_fn=process_action_from_leader,
-        image_keys=image_keys,
-        task_name=task_name,
-        stop_event=stop_event
-    )
+    listener, events = init_keyboard_listener()
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            break
+        run_policy(
+            robot=robot,
+            env=env,
+            events=events,
+            policy=policy,
+            fps=cfg.fps,
+            single_task=cfg.single_task,
+            viewer=viewer,
+            process_action_fn=process_action_from_leader,
+            image_keys=image_keys,
+            task_name=task_name,
+            stop_event=stop_event
+        )
+    if listener is not None:
+        listener.stop()
 
 
 @parser.wrap()
