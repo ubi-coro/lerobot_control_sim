@@ -63,7 +63,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.control_configs import TeleoperateControlConfig, \
     SimControlPipelineConfig, RecordControlConfig, PolicyControlConfig
 from lerobot.common.robot_devices.control_utils import sanity_check_dataset_name, init_keyboard_listener, \
-    log_control_info, predict_action
+    log_control_info, predict_action, sanity_check_dataset_robot_compatibility
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.sim.configs import SimConfig
@@ -79,28 +79,6 @@ from lerobot.common.sim.viewer import create_viewer
 
 os.environ["MUJOCO_GL"] = "egl"
 
-DEFAULT_FEATURES = {
-    "next.reward": {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": None,
-    },
-    "next.success": {
-        "dtype": "bool",
-        "shape": (1,),
-        "names": None,
-    },
-    "seed": {
-        "dtype": "int64",
-        "shape": (1,),
-        "names": None,
-    },
-    "timestamp": {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": None,
-    },
-}
 
 
 ########################################################################################
@@ -137,11 +115,40 @@ def get_sim_calibration(cfg: SimConfig):
 
 
 def load_or_create_dataset(cfg, env, image_keys):
+    DEFAULT_FEATURES = {
+        "next.reward": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": None,
+        },
+        "next.success": {
+            "dtype": "bool",
+            "shape": (1,),
+            "names": None,
+        },
+        "seed": {
+            "dtype": "int64",
+            "shape": (1,),
+            "names": None,
+        },
+        "timestamp": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": None,
+        },
+    }
     # get image keys
     policy = None
     num_cameras = len(image_keys)
     if cfg.resume:
-        raise NotImplementedError("Resume is not yet implemented for record.")  # TODO(jzilke)
+        dataset = LeRobotDataset(
+            cfg.repo_id,
+            root=cfg.root,
+        )
+        dataset.start_image_writer(
+            num_processes=cfg.num_image_writer_processes,
+            num_threads=cfg.num_image_writer_threads_per_camera *num_cameras)
+        # sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
     else:
         features = DEFAULT_FEATURES
         # add image keys to features
@@ -216,7 +223,7 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    # warmup_record(robot, env, events, viewer, process_action_from_leader, True, cfg.warmup_time_s, cfg.fps)
+    warmup_record(robot, env, events, viewer, process_action_from_leader, True, cfg.warmup_time_s, cfg.fps)
 
     # TODO(jzilke): check
     # if has_method(robot, "teleop_safety_stop"):
@@ -386,9 +393,11 @@ def control_sim_robot(cfg: SimControlPipelineConfig, stop_event=None, viewer=Non
     image_keys = copy.deepcopy(cfg.sim.image_keys)
     image_keys.remove("teleoperator_pov")
     if "place_cube" in cfg.sim.task_name:
+        print(f"{cfg.sim.task_name}: removing right wrist cam")
         image_keys.remove("wrist_cam_right")
 
     # run_policy(env, cfg.control.policy.pretrained_path, viewer, process_leader_actions_fn)
+    print(f"image_keys: {image_keys}")
 
     if isinstance(cfg.control, TeleoperateControlConfig):
         teleoperate(robot, env, viewer, process_leader_actions_fn, cfg.control, stop_event=stop_event)

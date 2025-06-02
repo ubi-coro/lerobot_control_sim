@@ -22,7 +22,7 @@ class SimConfig(draccus.ChoiceRegistry, abc.ABC):
 @dataclass
 class AlohaSimConfig(SimConfig):
     env: str = "aloha"
-    task_name: str = "place_cube_2"
+    task_name: str = "insertion"
     viewer: str = "both"
     image_keys: List[str] = field(default_factory=lambda: [
         "wrist_cam_right",
